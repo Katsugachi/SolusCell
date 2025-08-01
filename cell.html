@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SolusCell Simulator</title>
+  <style>
+    /* Reset & base */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, html {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: #1a1a1a;
+      color: #eee;
+    }
+    canvas { display: block; }
+
+    /* Panels */
+    .panel {
+      position: absolute;
+      background: rgba(20, 20, 20, 0.85);
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 8px;
+      overflow: hidden;
+      font-size: 14px;
+      z-index: 10;
+    }
+    #controls { top: 10px; left: 10px; width: 240px; }
+    #settings { top: 10px; right: 10px; width: 260px; max-height: 80%; display: none; overflow-y: auto;}
+    #status   { bottom: 10px; left: 10px; width: 300px; max-height: 40%; overflow-y: auto; }
+    #log      { bottom: 10px; right: 10px; width: 360px; max-height: 40%; overflow-y: auto; }
+
+    /* Headings & close button */
+    .panel h3 {
+      margin-bottom: 6px;
+      font-size: 16px;
+      border-bottom: 1px solid #555;
+      padding-bottom: 4px;
+    }
+    .close-btn {
+      position: absolute; top: 6px; right: 8px;
+      cursor: pointer; font-weight: bold; color: #888;
+    }
+    .close-btn:hover { color: #f66; }
+
+    /* Form elements */
+    .panel label { display: block; margin: 6px 0; }
+    .panel input[type=range] { width: 100%; }
+    .panel input[type=number] { width: 60px; }
+    .panel select { width: 100%; }
+
+    /* Log & status styling */
+    #log, #status {
+      background: rgba(10,10,10,0.9);
+      padding: 6px; font-size: 13px;
+      border: 1px solid #333; border-radius: 4px;
+    }
+    #log div, #status div { margin-bottom: 4px; }
+
+    /* Canvas overlay gradient */
+    #cellCanvas {
+      position: absolute;
+      top: 0; left: 0;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <!-- Main Controls -->
+  <div id="controls" class="panel">
+    <h3>Quick Controls</h3>
+    <label>Cell Type:
+      <select id="cellType">
+        <option>Generic</option>
+        <option>Neuron</option>
+        <option>Myocyte</option>
+      </select>
+    </label>
+    <label>Temperature: <span id="tempVal">37 °C</span>
+      <input id="temp" type="range" min="20" max="45" value="37">
+    </label>
+    <label>pH: <span id="phVal">7.4</span>
+      <input id="ph" type="range" min="5" max="9" step="0.1" value="7.4">
+    </label>
+    <label>ATP Yield: <span id="atpYieldVal">1.0×</span>
+      <input id="atpYield" type="range" min="0.2" max="3" step="0.1" value="1">
+    </label>
+    <button id="showSettings">🔧 Advanced Settings</button>
+  </div>
+
+  <!-- Advanced Settings Panel -->
+  <div id="settings" class="panel">
+    <span class="close-btn" id="closeSettings">×</span>
+    <h3>Advanced Settings</h3>
+
+    <div><strong>Metabolism Rates</strong></div>
+    <label> Glycolysis: <input id="rGly" type="number" step="0.001" value="0.010"></label>
+    <label> Pyruvate→Krebs: <input id="rKrebs" type="number" step="0.001" value="0.005"></label>
+    <label> NADH→ATP: <input id="rOxN" type="number" step="0.001" value="0.020"></label>
+    <label> FADH₂→ATP: <input id="rOxF" type="number" step="0.001" value="0.015"></label>
+
+    <div style="margin-top:8px"><strong>Channel Densities</strong></div>
+    <label> Na⁺ chans: <input id="dNa" type="number" step="1" value="50"></label>
+    <label> K⁺ chans: <input id="dK"  type="number" step="1" value="15"></label>
+    <label> Ca²⁺ chans: <input id="dCa" type="number" step="1" value="0"></label>
+
+    <div style="margin-top:8px"><strong>Gating Kinetics (τ ms)</strong></div>
+    <label> τ<sub>m</sub>: <input id="tauM" type="number" step="0.1" value="1.0"></label>
+    <label> τ<sub>h</sub>: <input id="tauH" type="number" step="0.1" value="7.0"></label>
+    <label> τ<sub>n</sub>: <input id="tauN" type="number" step="0.1" value="10.0"></label>
+
+    <div style="margin-top:8px"><strong>mRNA / Translation</strong></div>
+    <label> init mRNA: <input id="initmRNA" type="number" step="1" value="50"></label>
+    <label> mRNA half-life: <input id="hlife" type="number" step="10" value="2000"></label>
+    <label> stall prob.: <input id="stallP" type="number" step="0.001" value="0.005"></label>
+
+    <div style="margin-top:8px"><strong>Organelles</strong></div>
+    <label> Synaptic vesicles: <input id="vesCount" type="number" step="1" value="30"></label>
+    <label> SR networks: <input id="srCount" type="number" step="1" value="5"></label>
+  </div>
+
+  <!-- Status Panel -->
+  <div id="status" class="panel">
+    <h3>Status</h3>
+    <div>ATP: <span id="statATP">0</span></div>
+    <div>Glucose: <span id="statGluc">0</span></div>
+    <div>Pyruvate: <span id="statPyr">0</span></div>
+    <div>NADH/NAD: <span id="statNADH">0</span> / <span id="statNAD">0</span></div>
+    <div>Vm: <span id="statVm">0</span> mV</div>
+    <div>m: <span id="statM">0</span>, h: <span id="statH">0</span>, n: <span id="statN">0</span></div>
+  </div>
+
+  <!-- Log Panel -->
+  <div id="log" class="panel">
+    <h3>Event Log</h3>
+  </div>
+
+  <canvas id="cellCanvas"></canvas>
+
+  <script>
+  (() => {
+    // Canvas & context
+    const canvas = document.getElementById('cellCanvas');
+    const ctx = canvas.getContext('2d');
+    let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+    window.addEventListener('resize', () => {
+      W = canvas.width = innerWidth;
+      H = canvas.height = innerHeight;
+      initCell();
+    });
+
+    // UI refs
+    const ui = {
+      cellType:   document.getElementById('cellType'),
+      temp:       document.getElementById('temp'),
+      ph:         document.getElementById('ph'),
+      atpYield:   document.getElementById('atpYield'),
+      tempVal:    document.getElementById('tempVal'),
+      phVal:      document.getElementById('phVal'),
+      atpYieldVal:document.getElementById('atpYieldVal'),
+
+      showSettings: document.getElementById('showSettings'),
+      settings:     document.getElementById('settings'),
+      closeSettings:document.getElementById('closeSettings'),
+
+      // advanced
+      rGly:    document.getElementById('rGly'),
+      rKrebs:  document.getElementById('rKrebs'),
+      rOxN:    document.getElementById('rOxN'),
+      rOxF:    document.getElementById('rOxF'),
+      dNa:     document.getElementById('dNa'),
+      dK:      document.getElementById('dK'),
+      dCa:     document.getElementById('dCa'),
+      tauM:    document.getElementById('tauM'),
+      tauH:    document.getElementById('tauH'),
+      tauN:    document.getElementById('tauN'),
+      initmRNA:document.getElementById('initmRNA'),
+      hlife:   document.getElementById('hlife'),
+      stallP:  document.getElementById('stallP'),
+      vesCount:document.getElementById('vesCount'),
+      srCount: document.getElementById('srCount'),
+
+      // status & log
+      statATP:  document.getElementById('statATP'),
+      statGluc: document.getElementById('statGluc'),
+      statPyr:  document.getElementById('statPyr'),
+      statNADH: document.getElementById('statNADH'),
+      statNAD:  document.getElementById('statNAD'),
+      statVm:   document.getElementById('statVm'),
+      statM:    document.getElementById('statM'),
+      statH:    document.getElementById('statH'),
+      statN:    document.getElementById('statN'),
+      log:      document.getElementById('log')
+    };
+
+    // toggle settings
+    ui.showSettings.onclick = () => ui.settings.style.display = 'block';
+    ui.closeSettings.onclick = () => ui.settings.style.display = 'none';
+
+    // bind simple controls
+    ui.temp.oninput = () => {
+      temperature = +ui.temp.value;
+      ui.tempVal.textContent = temperature + ' °C';
+    };
+    ui.ph.oninput = () => {
+      pH = +ui.ph.value;
+      ui.phVal.textContent = pH.toFixed(1);
+    };
+    ui.atpYield.oninput = () => {
+      atpYield = +ui.atpYield.value;
+      ui.atpYieldVal.textContent = atpYield.toFixed(1) + '×';
+    };
+    ui.cellType.onchange = () => initCell();
+
+    // random helper
+    const rand = (min, max) => Math.random() * (max - min) + min;
+
+    // Logging utility
+    function logEvent(msg) {
+      const entry = document.createElement('div');
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      ui.log.appendChild(entry);
+      ui.log.scrollTop = ui.log.scrollHeight;
+    }
+
+    // Drawable base
+    class Drawable {
+      constructor(x, y) { this.x = x; this.y = y; }
+      update() {}
+      draw() {}
+    }
+
+    // Organelle with gradient & shadow
+    class Organelle extends Drawable {
+      constructor(opts) {
+        super(opts.x, opts.y);
+        Object.assign(this, opts);
+      }
+      draw() {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+        ctx.shadowBlur = 8;
+        const grad = ctx.createRadialGradient(
+          this.x, this.y, this.w * 0.3,
+          this.x, this.y, this.w
+        );
+        grad.addColorStop(0, this.colorLight || this.color);
+        grad.addColorStop(1, this.color);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        if (this.shape === 'ellipse') {
+          ctx.ellipse(this.x, this.y, this.w, this.h, 0, 0, 2 * Math.PI);
+        } else {
+          ctx.rect(this.x - this.w, this.y - this.h, this.w * 2, this.h * 2);
+        }
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Molecule with glow & trail
+    class Molecule extends Drawable {
+      constructor(type) {
+        super(rand(W * 0.2, W * 0.8), rand(H * 0.2, H * 0.8));
+        this.type = type;
+        this.size = { ATP: 3, Protein: 4, CO2: 2 }[type] || rand(1, 2);
+        this.color = {
+          ATP: '#0f0', Protein: '#ff0', CO2: '#999',
+          ion: '#f00', water: '#0cf'
+        }[type] || '#888';
+        this.vx = rand(-1, 1); this.vy = rand(-1, 1);
+        this.life = type === 'mRNA' ? +ui.hlife.value : rand(500, 2000);
+        this.trail = [];
+      }
+      update() {
+        // record trail
+        this.trail.push({ x: this.x, y: this.y });
+        if (this.trail.length > 6) this.trail.shift();
+
+        // Brownian motion
+        const speed = (temperature / 37) * (7.4 / pH);
+        this.vx += rand(-0.1, 0.1) * 0.5;
+        this.vy += rand(-0.1, 0.1) * 0.5;
+        this.x += this.vx * 0.5 * speed;
+        this.y += this.vy * 0.5 * speed;
+
+        // bounce off membrane
+        const cx = W / 2, cy = H / 2, r = Math.min(W, H) * 0.4;
+        const dx = this.x - cx, dy = this.y - cy;
+        if (dx * dx + dy * dy > r * r) {
+          const n = Math.hypot(dx, dy);
+          this.x = cx + dx / n * r;
+          this.y = cy + dy / n * r;
+          this.vx *= -1; this.vy *= -1;
+        }
+        this.life--;
+      }
+      draw() {
+        // draw trail
+        for (let i = 0; i < this.trail.length; i++) {
+          const pt = this.trail[i];
+          ctx.fillStyle = this.color + (i / this.trail.length * 0.4).toString(16);
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, this.size * (i / this.trail.length), 0, 2 * Math.PI);
+          ctx.fill();
+        }
+        // draw head
+        ctx.save();
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 6;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Simulation state & setup
+    let organelles = [], molecules = [], mRNAs = [];
+    let species = {}, ions = {}, gating = { m: 0, h: 1, n: 0 };
+    let Vm = 0, protCount = 0;
+    let temperature = +ui.temp.value, pH = +ui.ph.value, atpYield = +ui.atpYield.value;
+
+    // Hodgkin–Huxley functions
+    function αm(V){ return 0.1*(25 - V)/(Math.exp((25 - V)/10)-1); }
+    function βm(V){ return 4*Math.exp(-V/18); }
+    function αh(V){ return 0.07*Math.exp(-V/20); }
+    function βh(V){ return 1/(Math.exp((30 - V)/10)+1); }
+    function αn(V){ return 0.01*(10 - V)/(Math.exp((10 - V)/10)-1); }
+    function βn(V){ return 0.125*Math.exp(-V/80); }
+
+    // Initialize or reset everything
+    function initCell() {
+      organelles = []; molecules = []; mRNAs = [];
+      protCount = 0; ui.statATP.textContent = '0'; ui.statGluc.textContent = '0';
+      ui.statPyr.textContent = '0'; ui.statNADH.textContent = '0'; ui.statNAD.textContent = '0';
+      logEvent('Cell re-initialized to ' + ui.cellType.value);
+
+      // species pools
+      species = {
+        glucose: 20, pyruvate: 0, NADH: 0, NAD: 100,
+        FADH2: 0,  FAD: 100,   CO2: 0, ATP: 0, ADP: 100
+      };
+
+      // ions
+      ions = {
+        Na_in: 12,   Na_out: 145,
+        K_in:  140,  K_out:   4,
+        Ca_in: 0.0001, Ca_out: 1.2
+      };
+
+      // gating reset
+      gating = { m: 0, h: 1, n: 0 };
+
+      // organelles
+      const cx = W/2, cy = H/2, sc = Math.min(W,H)*0.4;
+      // nucleus
+      organelles.push(new Organelle({
+        shape:'ellipse', x:cx, y:cy,
+        w:sc*0.3, h:sc*0.3,
+        color:'#550088', colorLight:'#a050ff'
+      }));
+      // mitochondria
+      for (let i=0; i<5; i++) {
+        organelles.push(new Organelle({
+          shape:'ellipse',
+          x:cx + rand(-sc*0.6, sc*0.6),
+          y:cy + rand(-sc*0.6, sc*0.6),
+          w:sc*0.12, h:sc*0.06,
+          color:'#880000', colorLight:'#ff3333'
+        }));
+      }
+      // ER
+      for (let i=0; i<20; i++) {
+        organelles.push(new Organelle({
+          shape:'rect',
+          x:cx + rand(-sc*0.7, sc*0.7),
+          y:cy + rand(-sc*0.7, sc*0.7),
+          w:rand(5,15), h:rand(1,3),
+          color:'#008888', colorLight:'#33ffff'
+        }));
+      }
+      // Golgi
+      for (let i=0; i<3; i++) {
+        organelles.push(new Organelle({
+          shape:'rect',
+          x:cx + rand(-sc*0.5, sc*0.5),
+          y:cy + rand(-sc*0.5, sc*0.5),
+          w:rand(20,30), h:rand(10,15),
+          color:'#886600', colorLight:'#ffcc33'
+        }));
+      }
+      // synaptic vesicles
+      for (let i=0; i<+ui.vesCount.value; i++) {
+        organelles.push(new Organelle({
+          shape:'ellipse',
+          x:cx + rand(-sc*0.8, sc*0.8),
+          y:cy + rand(-sc*0.8, sc*0.8),
+          w:5, h:5,
+          color:'#ff66cc', colorLight:'#ff99dd'
+        }));
+      }
+      // SR
+      for (let i=0; i<+ui.srCount.value; i++) {
+        organelles.push(new Organelle({
+          shape:'rect',
+          x:cx + rand(-sc*0.7, sc*0.7),
+          y:cy + rand(-sc*0.7, sc*0.7),
+          w:rand(10,20), h:rand(3,6),
+          color:'#0044aa', colorLight:'#3377ff'
+        }));
+      }
+
+      // seed water & ions
+      for (let i=0; i<300; i++) molecules.push(new Molecule('water'));
+      for (let i=0; i<200; i++) molecules.push(new Molecule('ion'));
+
+      // seed mRNA
+      for (let i=0; i<+ui.initmRNA.value; i++) {
+        mRNAs.push(new Molecule('mRNA'));
+      }
+    }
+
+    // Reaction network & logging
+    function stepReactions() {
+      const reactions = [
+        { r:{glucose:1}, p:{pyruvate:2, ATP:2, NADH:2}, rate:+ui.rGly.value },
+        { r:{pyruvate:1}, p:{CO2:3, NADH:1, FADH2:1, ATP:1}, rate:+ui.rKrebs.value },
+        { r:{NADH:1}, p:{NAD:1, ATP:3}, rate:+ui.rOxN.value },
+        { r:{FADH2:1}, p:{FAD:1, ATP:2}, rate:+ui.rOxF.value }
+      ];
+      reactions.forEach(rx => {
+        if (Math.random() < rx.rate * atpYield) {
+          // check
+          for (let m in rx.r) if (species[m] < rx.r[m]) return;
+          // consume
+          for (let m in rx.r) species[m] -= rx.r[m];
+          // produce
+          for (let m in rx.p) {
+            species[m] = (species[m]||0) + rx.p[m];
+            // spawn molecules
+            if (m==='ATP') for (let i=0; i<rx.p[m]; i++) molecules.push(new Molecule('ATP'));
+            if (m==='CO2') for (let i=0; i<rx.p[m]; i++) molecules.push(new Molecule('CO2'));
+          }
+          // log
+          logEvent(`Reaction: consumed ${JSON.stringify(rx.r)} → produced ${JSON.stringify(rx.p)}`);
+        }
+      });
+      // update status
+      ui.statATP.textContent  = species.ATP;
+      ui.statGluc.textContent = species.glucose;
+      ui.statPyr.textContent  = species.pyruvate;
+      ui.statNADH.textContent = species.NADH;
+      ui.statNAD.textContent  = species.NAD;
+    }
+
+    // Membrane HH & logging
+    function stepMembrane() {
+      // update gating
+      const V = Vm, dt = 1;
+      const mInf = αm(V)/(αm(V)+βm(V)),
+            hInf = αh(V)/(αh(V)+βh(V)),
+            nInf = αn(V)/(αn(V)+βn(V));
+      gating.m += (mInf - gating.m)*(dt/+ui.tauM.value);
+      gating.h += (hInf - gating.h)*(dt/+ui.tauH.value);
+      gating.n += (nInf - gating.n)*(dt/+ui.tauN.value);
+
+      // Goldman eqn
+      const Pk = +ui.dK.value,
+            Pna = +ui.dNa.value*0.001,
+            Pca = +ui.dCa.value*0.00001;
+      Vm = 58 * Math.log(
+        (Pk*ions.K_out + Pna*ions.Na_out + Pca*Math.sqrt(ions.Ca_out)) /
+        (Pk*ions.K_in  + Pna*ions.Na_in  + Pca*Math.sqrt(ions.Ca_in))
+      );
+      ui.statVm.textContent = Vm.toFixed(1);
+      ui.statM.textContent  = gating.m.toFixed(2);
+      ui.statH.textContent  = gating.h.toFixed(2);
+      ui.statN.textContent  = gating.n.toFixed(2);
+
+      logEvent(`Vm updated to ${Vm.toFixed(1)} mV`);
+    }
+
+    // Translation & logging
+    function stepTranslation() {
+      const stall = +ui.stallP.value;
+      for (let i = 0; i < mRNAs.length; i++) {
+        if (Math.random() > stall) {
+          molecules.push(new Molecule('Protein'));
+          protCount++;
+          logEvent(`Protein synthesized (total: ${protCount})`);
+        }
+        if (--mRNAs[i].life <= 0) {
+          mRNAs.splice(i, 1);
+          i--;
+        }
+      }
+    }
+
+    // Main loop
+    function loop() {
+      // draw gradient interior
+      const grd = ctx.createRadialGradient(
+        W/2, H/2, 0, W/2, H/2, Math.min(W,H)*0.4
+      );
+      grd.addColorStop(0, 'rgba(30,30,40,0.8)');
+      grd.addColorStop(1, 'rgba(10,10,20,0.4)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+
+      // membrane border
+      ctx.strokeStyle = '#44a';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.ellipse(W/2, H/2, Math.min(W,H)*0.4, Math.min(W,H)*0.4, 0, 0, 2*Math.PI);
+      ctx.stroke();
+
+      // organelles
+      organelles.forEach(o => o.draw());
+
+      // molecules
+      for (let i = molecules.length - 1; i >= 0; i--) {
+        const m = molecules[i];
+        m.update();
+        if (m.life <= 0) {
+          molecules.splice(i, 1);
+        } else {
+          m.draw();
+        }
+      }
+
+      // updates
+      stepReactions();
+      stepMembrane();
+      stepTranslation();
+
+      requestAnimationFrame(loop);
+    }
+
+    // start
+    initCell();
+    loop();
+  })();
+  </script>
+</body>
+</html>
