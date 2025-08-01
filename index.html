@@ -3,13 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <title>SolusCell</title>
+
+  <!-- friendly, highly-readable web font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+
   <style>
     /* Reset & base */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body, html {
       width: 100%; height: 100%;
       overflow: hidden;
-      font-family: Arial, sans-serif;
+      font-family: 'Inter', sans-serif;
       background: #1a1a1a;
       color: #eee;
     }
@@ -27,7 +32,12 @@
       z-index: 10;
     }
     #controls { top: 10px; left: 10px; width: 240px; }
-    #settings { top: 10px; right: 10px; width: 260px; max-height: 80%; display: none; overflow-y: auto; }
+    #settings {
+      z-index: 20;   /* bring settings on top */
+      top: 10px; right: 10px;
+      width: 260px; max-height: 80%;
+      display: none; overflow-y: auto;
+    }
     #status   { bottom: 10px; left: 10px; width: 300px; max-height: 40%; overflow-y: auto; }
     #log      { bottom: 10px; right: 10px; width: 360px; max-height: 40%; overflow-y: auto; }
 
@@ -37,6 +47,8 @@
       font-size: 16px;
       border-bottom: 1px solid #555;
       padding-bottom: 4px;
+      font-weight: 500;
+      letter-spacing: .5px;
     }
     .close-btn {
       position: absolute; top: 6px; right: 8px;
@@ -47,8 +59,48 @@
     /* Form elements */
     .panel label { display: block; margin: 6px 0; }
     .panel input[type=range] { width: 100%; }
-    .panel input[type=number] { width: 60px; }
     .panel select { width: 100%; }
+
+    /* Style all text/number inputs and selects */
+    input[type="number"],
+    input[type="text"],
+    select {
+      background: #2a2a2a;
+      color: #eee;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 14px;
+      outline: none;
+      font-family: 'Inter', sans-serif;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      height: 4px;
+      background: #555;
+      border-radius: 2px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: #6fa;
+      box-shadow: 0 0 6px rgba(102,255,170,0.4);
+    }
+
+    /* Style buttons */
+    button {
+      background: #3a3a3a;
+      color: #eee;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background .2s, border-color .2s;
+      font-family: 'Inter', sans-serif;
+    }
+    button:hover {
+      background: #4d4d4d;
+      border-color: #6fa;
+    }
 
     /* Log & status styling */
     #log, #status {
@@ -309,7 +361,6 @@
 
     // ── Protein Folding Additions ───────────────────────────────────
 
-    // misfold probability from temperature & pH
     function getStressFactor() {
       const tS = Math.max(0, temperature - 37) * 0.02;
       const pS = Math.max(0, (7.4 - pH) / 0.1) * 0.05;
@@ -320,7 +371,7 @@
       constructor(sequence) {
         super('Protein');
         this.sequence = sequence;
-        this.foldingStatus = 'unfolded';  // unfolded | folded | misfolded | refolding
+        this.foldingStatus = 'unfolded';
         this.misfoldProb = getStressFactor();
       }
       attemptFold() {
@@ -339,7 +390,7 @@
           : 'misfolded';
       }
       decay() {
-        // optional cleanup of perpetual misfolds
+        // optional cleanup
       }
     }
 
@@ -363,7 +414,6 @@
     let Vm = 0, protCount = 0;
     let temperature = +ui.temp.value, pH = +ui.ph.value, atpYield = +ui.atpYield.value;
 
-    // Hodgkin–Huxley rate functions
     function αm(V){ return 0.1*(25 - V)/(Math.exp((25 - V)/10)-1); }
     function βm(V){ return 4*Math.exp(-V/18); }
     function αh(V){ return 0.07*Math.exp(-V/20); }
@@ -371,7 +421,6 @@
     function αn(V){ return 0.01*(10 - V)/(Math.exp((10 - V)/10)-1); }
     function βn(V){ return 0.125*Math.exp(-V/80); }
 
-    // Initialize or reset everything
     function initCell() {
       organelles = []; molecules = []; mRNAs = []; protCount = 0;
       ui.statATP.textContent = '0'; ui.statGluc.textContent = '0';
@@ -380,23 +429,17 @@
       ui.statM.textContent = '0'; ui.statH.textContent = '0'; ui.statN.textContent = '0';
       logEvent('Cell re-initialized to ' + ui.cellType.value);
 
-      // species pools
       species = {
         glucose: 20, pyruvate: 0, NADH: 0, NAD: 100,
         FADH2: 0,  FAD: 100,   CO2: 0, ATP: 0, ADP: 100
       };
-
-      // ions
       ions = {
         Na_in: 12,   Na_out: 145,
         K_in:  140,  K_out:   4,
         Ca_in: 0.0001, Ca_out: 1.2
       };
-
-      // gating reset
       gating = { m: 0, h: 1, n: 0 };
 
-      // organelles (nucleus, mitochondria, ER, Golgi, vesicles, SR)
       const cx = W/2, cy = H/2, sc = Math.min(W, H)*0.4;
       organelles.push(new Organelle({
         shape:'ellipse', x:cx, y:cy,
@@ -449,23 +492,18 @@
         }));
       }
 
-      // seed water & ions
       for (let i = 0; i < 300; i++) molecules.push(new Molecule('water'));
       for (let i = 0; i < 200; i++) molecules.push(new Molecule('ion'));
-
-      // seed mRNA
       for (let i = 0; i < +ui.initmRNA.value; i++) {
         mRNAs.push(new Molecule('mRNA'));
       }
 
-      // initialize chaperonins
       chaperonins = [
         new Chaperonin(5),
         new Chaperonin(5)
       ];
     }
 
-    // Reaction network & logging
     function stepReactions() {
       const reactions = [
         { r:{glucose:1}, p:{pyruvate:2, ATP:2, NADH:2}, rate:+ui.rGly.value },
@@ -492,7 +530,6 @@
       ui.statNAD.textContent  = species.NAD;
     }
 
-    // Membrane HH & logging
     function stepMembrane() {
       const V = Vm, dt = 1;
       const mInf = αm(V)/(αm(V)+βm(V)),
@@ -518,7 +555,6 @@
       logEvent(`Vm updated to ${Vm.toFixed(1)} mV`);
     }
 
-    // Translation & folding-aware logging
     function stepTranslation() {
       const stall = +ui.stallP.value;
       for (let i = 0; i < mRNAs.length; i++) {
@@ -536,7 +572,6 @@
       }
     }
 
-    // Protein folding step
     function stepFolding() {
       let totalRefolded = 0;
       chaperonins.forEach(chap => {
@@ -554,9 +589,7 @@
       }
     }
 
-    // Main loop
     function loop() {
-      // draw gradient interior
       const grd = ctx.createRadialGradient(
         W/2, H/2, 0, W/2, H/2, Math.min(W,H)*0.4
       );
@@ -565,17 +598,14 @@
       ctx.fillStyle = grd;
       ctx.fillRect(0, 0, W, H);
 
-      // membrane border
       ctx.strokeStyle = '#44a';
       ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.ellipse(W/2, H/2, Math.min(W,H)*0.4, Math.min(W,H)*0.4, 0, 0, 2*Math.PI);
       ctx.stroke();
 
-      // organelles
       organelles.forEach(o => o.draw());
 
-      // molecules
       for (let i = molecules.length - 1; i >= 0; i--) {
         const m = molecules[i];
         m.update();
@@ -586,7 +616,6 @@
         }
       }
 
-      // simulation steps
       stepReactions();
       stepMembrane();
       stepTranslation();
@@ -595,7 +624,6 @@
       requestAnimationFrame(loop);
     }
 
-    // start simulation
     initCell();
     loop();
   })();
