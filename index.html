@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>SolusCell Simulator</title>
+  <title>SolusCell</title>
   <style>
     /* Reset & base */
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -27,7 +27,7 @@
       z-index: 10;
     }
     #controls { top: 10px; left: 10px; width: 240px; }
-    #settings { top: 10px; right: 10px; width: 260px; max-height: 80%; display: none; overflow-y: auto;}
+    #settings { top: 10px; right: 10px; width: 260px; max-height: 80%; display: none; overflow-y: auto; }
     #status   { bottom: 10px; left: 10px; width: 300px; max-height: 40%; overflow-y: auto; }
     #log      { bottom: 10px; right: 10px; width: 360px; max-height: 40%; overflow-y: auto; }
 
@@ -159,12 +159,9 @@
       tempVal:    document.getElementById('tempVal'),
       phVal:      document.getElementById('phVal'),
       atpYieldVal:document.getElementById('atpYieldVal'),
-
       showSettings: document.getElementById('showSettings'),
       settings:     document.getElementById('settings'),
       closeSettings:document.getElementById('closeSettings'),
-
-      // advanced
       rGly:    document.getElementById('rGly'),
       rKrebs:  document.getElementById('rKrebs'),
       rOxN:    document.getElementById('rOxN'),
@@ -180,8 +177,6 @@
       stallP:  document.getElementById('stallP'),
       vesCount:document.getElementById('vesCount'),
       srCount: document.getElementById('srCount'),
-
-      // status & log
       statATP:  document.getElementById('statATP'),
       statGluc: document.getElementById('statGluc'),
       statPyr:  document.getElementById('statPyr'),
@@ -274,18 +269,15 @@
         this.trail = [];
       }
       update() {
-        // record trail
         this.trail.push({ x: this.x, y: this.y });
         if (this.trail.length > 6) this.trail.shift();
 
-        // Brownian motion
         const speed = (temperature / 37) * (7.4 / pH);
         this.vx += rand(-0.1, 0.1) * 0.5;
         this.vy += rand(-0.1, 0.1) * 0.5;
         this.x += this.vx * 0.5 * speed;
         this.y += this.vy * 0.5 * speed;
 
-        // bounce off membrane
         const cx = W / 2, cy = H / 2, r = Math.min(W, H) * 0.4;
         const dx = this.x - cx, dy = this.y - cy;
         if (dx * dx + dy * dy > r * r) {
@@ -297,7 +289,6 @@
         this.life--;
       }
       draw() {
-        // draw trail
         for (let i = 0; i < this.trail.length; i++) {
           const pt = this.trail[i];
           ctx.fillStyle = this.color + (i / this.trail.length * 0.4).toString(16);
@@ -305,7 +296,6 @@
           ctx.arc(pt.x, pt.y, this.size * (i / this.trail.length), 0, 2 * Math.PI);
           ctx.fill();
         }
-        // draw head
         ctx.save();
         ctx.shadowColor = this.color;
         ctx.shadowBlur = 6;
@@ -317,13 +307,63 @@
       }
     }
 
-    // Simulation state & setup
-    let organelles = [], molecules = [], mRNAs = [];
+    // ── Protein Folding Additions ───────────────────────────────────
+
+    // misfold probability from temperature & pH
+    function getStressFactor() {
+      const tS = Math.max(0, temperature - 37) * 0.02;
+      const pS = Math.max(0, (7.4 - pH) / 0.1) * 0.05;
+      return 0.01 + tS + pS;
+    }
+
+    class ProteinMol extends Molecule {
+      constructor(sequence) {
+        super('Protein');
+        this.sequence = sequence;
+        this.foldingStatus = 'unfolded';  // unfolded | folded | misfolded | refolding
+        this.misfoldProb = getStressFactor();
+      }
+      attemptFold() {
+        if (this.foldingStatus === 'unfolded') {
+          this.foldingStatus = (Math.random() < this.misfoldProb)
+            ? 'misfolded'
+            : 'folded';
+        }
+      }
+      refold() {
+        this.foldingStatus = 'refolding';
+        const successRate = 0.8 * (species.ATP / 1000);
+        species.ATP = Math.max(0, species.ATP - 2);
+        this.foldingStatus = (Math.random() < successRate)
+          ? 'folded'
+          : 'misfolded';
+      }
+      decay() {
+        // optional cleanup of perpetual misfolds
+      }
+    }
+
+    class Chaperonin {
+      constructor(capacity = 10) {
+        this.capacity = capacity;
+      }
+      scanAndRefold() {
+        const mis = molecules.filter(m =>
+          m instanceof ProteinMol && m.foldingStatus === 'misfolded'
+        );
+        const batch = mis.slice(0, this.capacity);
+        batch.forEach(p => p.refold());
+        return batch.length;
+      }
+    }
+
+    // ── Simulation State & Setup ────────────────────────────────────
+    let organelles = [], molecules = [], mRNAs = [], chaperonins = [];
     let species = {}, ions = {}, gating = { m: 0, h: 1, n: 0 };
     let Vm = 0, protCount = 0;
     let temperature = +ui.temp.value, pH = +ui.ph.value, atpYield = +ui.atpYield.value;
 
-    // Hodgkin–Huxley functions
+    // Hodgkin–Huxley rate functions
     function αm(V){ return 0.1*(25 - V)/(Math.exp((25 - V)/10)-1); }
     function βm(V){ return 4*Math.exp(-V/18); }
     function αh(V){ return 0.07*Math.exp(-V/20); }
@@ -333,9 +373,11 @@
 
     // Initialize or reset everything
     function initCell() {
-      organelles = []; molecules = []; mRNAs = [];
-      protCount = 0; ui.statATP.textContent = '0'; ui.statGluc.textContent = '0';
-      ui.statPyr.textContent = '0'; ui.statNADH.textContent = '0'; ui.statNAD.textContent = '0';
+      organelles = []; molecules = []; mRNAs = []; protCount = 0;
+      ui.statATP.textContent = '0'; ui.statGluc.textContent = '0';
+      ui.statPyr.textContent = '0'; ui.statNADH.textContent = '0';
+      ui.statNAD.textContent = '0'; ui.statVm.textContent = '0';
+      ui.statM.textContent = '0'; ui.statH.textContent = '0'; ui.statN.textContent = '0';
       logEvent('Cell re-initialized to ' + ui.cellType.value);
 
       // species pools
@@ -354,16 +396,14 @@
       // gating reset
       gating = { m: 0, h: 1, n: 0 };
 
-      // organelles
-      const cx = W/2, cy = H/2, sc = Math.min(W,H)*0.4;
-      // nucleus
+      // organelles (nucleus, mitochondria, ER, Golgi, vesicles, SR)
+      const cx = W/2, cy = H/2, sc = Math.min(W, H)*0.4;
       organelles.push(new Organelle({
         shape:'ellipse', x:cx, y:cy,
         w:sc*0.3, h:sc*0.3,
         color:'#550088', colorLight:'#a050ff'
       }));
-      // mitochondria
-      for (let i=0; i<5; i++) {
+      for (let i = 0; i < 5; i++) {
         organelles.push(new Organelle({
           shape:'ellipse',
           x:cx + rand(-sc*0.6, sc*0.6),
@@ -372,8 +412,7 @@
           color:'#880000', colorLight:'#ff3333'
         }));
       }
-      // ER
-      for (let i=0; i<20; i++) {
+      for (let i = 0; i < 20; i++) {
         organelles.push(new Organelle({
           shape:'rect',
           x:cx + rand(-sc*0.7, sc*0.7),
@@ -382,8 +421,7 @@
           color:'#008888', colorLight:'#33ffff'
         }));
       }
-      // Golgi
-      for (let i=0; i<3; i++) {
+      for (let i = 0; i < 3; i++) {
         organelles.push(new Organelle({
           shape:'rect',
           x:cx + rand(-sc*0.5, sc*0.5),
@@ -392,8 +430,7 @@
           color:'#886600', colorLight:'#ffcc33'
         }));
       }
-      // synaptic vesicles
-      for (let i=0; i<+ui.vesCount.value; i++) {
+      for (let i = 0; i < +ui.vesCount.value; i++) {
         organelles.push(new Organelle({
           shape:'ellipse',
           x:cx + rand(-sc*0.8, sc*0.8),
@@ -402,8 +439,7 @@
           color:'#ff66cc', colorLight:'#ff99dd'
         }));
       }
-      // SR
-      for (let i=0; i<+ui.srCount.value; i++) {
+      for (let i = 0; i < +ui.srCount.value; i++) {
         organelles.push(new Organelle({
           shape:'rect',
           x:cx + rand(-sc*0.7, sc*0.7),
@@ -414,13 +450,19 @@
       }
 
       // seed water & ions
-      for (let i=0; i<300; i++) molecules.push(new Molecule('water'));
-      for (let i=0; i<200; i++) molecules.push(new Molecule('ion'));
+      for (let i = 0; i < 300; i++) molecules.push(new Molecule('water'));
+      for (let i = 0; i < 200; i++) molecules.push(new Molecule('ion'));
 
       // seed mRNA
-      for (let i=0; i<+ui.initmRNA.value; i++) {
+      for (let i = 0; i < +ui.initmRNA.value; i++) {
         mRNAs.push(new Molecule('mRNA'));
       }
+
+      // initialize chaperonins
+      chaperonins = [
+        new Chaperonin(5),
+        new Chaperonin(5)
+      ];
     }
 
     // Reaction network & logging
@@ -433,22 +475,16 @@
       ];
       reactions.forEach(rx => {
         if (Math.random() < rx.rate * atpYield) {
-          // check
           for (let m in rx.r) if (species[m] < rx.r[m]) return;
-          // consume
           for (let m in rx.r) species[m] -= rx.r[m];
-          // produce
           for (let m in rx.p) {
             species[m] = (species[m]||0) + rx.p[m];
-            // spawn molecules
-            if (m==='ATP') for (let i=0; i<rx.p[m]; i++) molecules.push(new Molecule('ATP'));
-            if (m==='CO2') for (let i=0; i<rx.p[m]; i++) molecules.push(new Molecule('CO2'));
+            if (m==='ATP') for (let i=0;i<rx.p[m];i++) molecules.push(new Molecule('ATP'));
+            if (m==='CO2') for (let i=0;i<rx.p[m];i++) molecules.push(new Molecule('CO2'));
           }
-          // log
           logEvent(`Reaction: consumed ${JSON.stringify(rx.r)} → produced ${JSON.stringify(rx.p)}`);
         }
       });
-      // update status
       ui.statATP.textContent  = species.ATP;
       ui.statGluc.textContent = species.glucose;
       ui.statPyr.textContent  = species.pyruvate;
@@ -458,7 +494,6 @@
 
     // Membrane HH & logging
     function stepMembrane() {
-      // update gating
       const V = Vm, dt = 1;
       const mInf = αm(V)/(αm(V)+βm(V)),
             hInf = αh(V)/(αh(V)+βh(V)),
@@ -467,14 +502,14 @@
       gating.h += (hInf - gating.h)*(dt/+ui.tauH.value);
       gating.n += (nInf - gating.n)*(dt/+ui.tauN.value);
 
-      // Goldman eqn
-      const Pk = +ui.dK.value,
-            Pna = +ui.dNa.value*0.001,
-            Pca = +ui.dCa.value*0.00001;
+      const Pk  = +ui.dK.value,
+            Pna = +ui.dNa.value * 0.001,
+            Pca = +ui.dCa.value * 0.00001;
       Vm = 58 * Math.log(
         (Pk*ions.K_out + Pna*ions.Na_out + Pca*Math.sqrt(ions.Ca_out)) /
         (Pk*ions.K_in  + Pna*ions.Na_in  + Pca*Math.sqrt(ions.Ca_in))
       );
+
       ui.statVm.textContent = Vm.toFixed(1);
       ui.statM.textContent  = gating.m.toFixed(2);
       ui.statH.textContent  = gating.h.toFixed(2);
@@ -483,19 +518,39 @@
       logEvent(`Vm updated to ${Vm.toFixed(1)} mV`);
     }
 
-    // Translation & logging
+    // Translation & folding-aware logging
     function stepTranslation() {
       const stall = +ui.stallP.value;
       for (let i = 0; i < mRNAs.length; i++) {
         if (Math.random() > stall) {
-          molecules.push(new Molecule('Protein'));
+          const prot = new ProteinMol('Seq'+protCount);
+          prot.attemptFold();
+          molecules.push(prot);
           protCount++;
-          logEvent(`Protein synthesized (total: ${protCount})`);
+          logEvent(`Protein #${protCount} → ${prot.foldingStatus}`);
         }
         if (--mRNAs[i].life <= 0) {
           mRNAs.splice(i, 1);
           i--;
         }
+      }
+    }
+
+    // Protein folding step
+    function stepFolding() {
+      let totalRefolded = 0;
+      chaperonins.forEach(chap => {
+        totalRefolded += chap.scanAndRefold();
+      });
+      const backlog = molecules.filter(m =>
+        m instanceof ProteinMol && m.foldingStatus === 'misfolded'
+      ).length;
+      const capacity = chaperonins.reduce((sum, c) => sum + c.capacity, 0);
+      if (backlog > capacity) {
+        logEvent(`⚠️ Misfold overload: ${backlog} pending`);
+      }
+      if (totalRefolded) {
+        logEvent(`Chaperonins refolded ${totalRefolded}`);
       }
     }
 
@@ -531,15 +586,16 @@
         }
       }
 
-      // updates
+      // simulation steps
       stepReactions();
       stepMembrane();
       stepTranslation();
+      stepFolding();
 
       requestAnimationFrame(loop);
     }
 
-    // start
+    // start simulation
     initCell();
     loop();
   })();
